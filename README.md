@@ -10,11 +10,20 @@ Puedes alojarla en tu casa sobre un equipo disponible o en Oracle Always Free AR
 
 **Estado: implementación inicial funcional.** API, agente, frontend, contratos, Terraform, Kubernetes, CI y comunidad están incorporados. El laboratorio local amd64 pasó simulación, idempotencia, borrado real y recuperación. Las rutas públicas están configuradas y documentadas; requieren cuentas reales y validación. [Evidencia y límites](docs/validation/local-2026-10-04.md).
 
+Repositorio público: [ManuelPerilla/hydra](https://github.com/ManuelPerilla/hydra).
+
 ## Arranca Hydra con Docker
 
 Necesitas Docker ejecutándose con contenedores Linux, k3d y kubectl. Reserva 6 GB de RAM para Docker y deja libres los puertos locales 8080 y 6550. No necesitas cuenta cloud, OAuth ni credenciales de X.
 
-Desde la raíz del repositorio, en PowerShell:
+Clona el repositorio en PowerShell:
+
+```powershell
+git clone https://github.com/ManuelPerilla/hydra.git
+cd hydra
+```
+
+Desde su raíz, arranca el laboratorio:
 
 ```powershell
 ./scripts/bootstrap.ps1
@@ -66,7 +75,7 @@ Oracle comparte las cuotas con toda la cuenta: no se asume disponibilidad region
 
 Cloudflare Tunnel estable necesita un dominio; Quick Tunnel queda para demos. La ruta Oracle evita comprarlo usando certificados Let's Encrypt por IP de 160 horas con renovación diaria. [Cloudflare](https://developers.cloudflare.com/tunnel/get-started/), [Let's Encrypt](https://letsencrypt.org/2026/01/15/6day-and-ip-general-availability).
 
-Las imágenes publicadas tendrán `linux/amd64` y `linux/arm64`; el workflow valida ambas en runners nativos. El pipeline está preparado, aún sin ejecución remota. GHCR crea paquetes inicialmente privados: hazlos públicos y comprueba una descarga anónima. [Actions](https://docs.github.com/en/actions/reference/runners/github-hosted-runners), [GHCR](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry).
+Las imágenes publicadas tendrán `linux/amd64` y `linux/arm64`; el workflow valida ambas en runners nativos. Consulta el estado real del pipeline en [Actions de Hydra](https://github.com/ManuelPerilla/hydra/actions). La publicación del repositorio no certifica la finalización de los builds ni el acceso anónimo a GHCR. GHCR crea paquetes inicialmente privados: hazlos públicos y comprueba una descarga anónima. [Actions](https://docs.github.com/en/actions/reference/runners/github-hosted-runners), [GHCR](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry).
 
 Consulta [producción doméstica](docs/runbooks/home-tunnel.md) o [Oracle ARM](docs/runbooks/oracle-arm.md). Antes de exponer Hydra: imágenes por digest, HTTPS, OAuth, IDs permitidos y prueba de restauración.
 
