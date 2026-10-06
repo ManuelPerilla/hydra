@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { languageNames, locales, messages, plural, type Locale, type Messages } from "@/i18n/messages";
 import { ApiError, errorKey, fetchSnapshot, hasActiveExperiment, logout, submitExperiment, type Command, type Experiment, type HydraEvent, type Snapshot } from "@/lib/api";
 import { startTelemetry, type TransportState } from "@/lib/telemetry";
+import { learningMessages } from "@/i18n/learning";
 import NodeTapestry from "@/components/node-tapestry";
 
 function Icon({ name, size = 20 }: { name: "arrow" | "shield" | "pulse" | "github" | "chevron" | "bolt" | "refresh" | "nodes" | "check"; size?: number }) {
@@ -174,6 +175,7 @@ export default function Dashboard({ locale }: { locale: Locale }) {
       </div>
     </header>
     <main id="main" className="page-shell">
+      <aside className="console-learning-link"><span>{learningMessages[locale].consoleHint}</span><a href={`/${locale}/learn`}>{learningMessages[locale].learnLabel} →</a></aside>
       <section className="hero">
         <div className="hero-text"><p className="eyebrow"><span className="line" />{t.eyebrow}</p><h1>{t.title}<br /><span>{t.titleAccent}</span></h1><p className="hero-description">{t.subtitle}</p><div className="hero-tags"><span><Icon name="shield" size={14} />{t.safety}</span><span className="architecture-tag">amd64 / arm64</span></div></div>
         <div className="hero-art" aria-hidden="true"><div className="orbit orbit-one" /><div className="orbit orbit-two" /><div className="art-grid" /><Mark large /><span className="art-coordinates">K8S / RECOVERY SYSTEM</span><span className="art-marker">H—01</span></div>

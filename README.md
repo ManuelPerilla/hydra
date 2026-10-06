@@ -12,6 +12,20 @@ Puedes alojarla en tu casa sobre un equipo disponible o en Oracle Always Free AR
 
 Repositorio público: [ManuelPerilla/hydra](https://github.com/ManuelPerilla/hydra).
 
+## Aprende desde cero, sin Kubernetes
+
+La primera lección, **¿Qué pasa cuando desaparece un pod?**, está en `/es/learn` (también en inglés, portugués y árabe). Explica los conceptos, pide una predicción, permite recorrer una simulación paso a paso y cierra con lo aprendido. No requiere clúster, API, agente ni inicio de sesión. Las réplicas son ilustrativas: no son telemetría ni una medida de recuperación real.
+
+Para ejecutarla solo necesitas Node.js 24+ y pnpm 11.19.0:
+
+```sh
+cd apps/web
+pnpm install --frozen-lockfile
+pnpm dev
+```
+
+Abre **http://localhost:3000**. La raíz abre la lección; la consola avanzada conserva `/es` y sus controles. Para pasar al laboratorio real, sigue el arranque de Docker de abajo. La simulación de la consola (dry-run) continúa necesitando API y un clúster; es distinta de esta demo educativa local.
+
 ## Arranca Hydra con Docker
 
 Necesitas Docker ejecutándose con contenedores Linux, k3d y kubectl. Reserva 6 GB de RAM para Docker y deja libres los puertos locales 8080 y 6550. No necesitas cuenta cloud, OAuth ni credenciales de X.
