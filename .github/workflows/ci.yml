@@ -1,0 +1,85 @@
+name: Verify both architectures
+on:
+  pull_request:
+  workflow_call:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    if: github.event.repository.private == false
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_USER: hydra
+          POSTGRES_PASSWORD: hydra-ci-disposable
+          POSTGRES_DB: hydra
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U hydra -d hydra"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+        with:
+          dotnet-version: '10.0.x'
+      - name: Verify API and durable safety
+        working-directory: apps/api
+        env:
+          HYDRA_TEST_POSTGRES: Host=localhost;Port=5432;Database=hydra;Username=hydra;Password=hydra-ci-disposable
+        run: dotnet test Hydra.sln --configuration Release
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Verify interface
+        working-directory: apps/web
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.19.0 --activate
+          pnpm install --frozen-lockfile
+          pnpm typecheck
+          pnpm test
+          pnpm build
+      - name: Verify Rust safety
+        working-directory: apps/chaos-agent
+        run: |
+          rustup toolchain install 1.99.0 --profile minimal --component clippy --component rustfmt
+          cargo fmt --check
+          cargo test --locked
+          cargo clippy --locked --all-targets -- -D warnings
+  infrastructure:
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
+        with: {terraform_version: '1.16.5'}
+      - run: terraform fmt -check -recursive infra/terraform
+      - name: Validate without cloud credentials
+        run: |
+          for hydra_env in local home-tunnel oracle; do
+            terraform -chdir=infra/terraform/environments/$hydra_env init -backend=false -input=false
+            terraform -chdir=infra/terraform/environments/$hydra_env validate
+          done
+      - name: Verify FinOps quotas without cloud resources
+        run: |
+          terraform -chdir=infra/terraform/modules/zero-cost-guardrails init -backend=false -input=false
+          terraform -chdir=infra/terraform/modules/zero-cost-guardrails test
+      - name: Validate Kubernetes policy and render overlays
+        run: |
+          python -m pip install PyYAML==6.0.3
+          python scripts/check-infra.py
+          for hydra_env in local home-tunnel oracle-arm; do
+            kubectl kustomize infra/kubernetes/overlays/$hydra_env >/dev/null
+          done
+          python -m unittest discover -s tests/infra -v

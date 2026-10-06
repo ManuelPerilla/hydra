@@ -1,0 +1,7 @@
+region              = "your-home-region"
+tenancy_id          = "ocid1.tenancy..."
+compartment_id      = "ocid1.compartment..."
+availability_domain = "your-availability-domain"
+ssh_public_key      = "ssh-ed25519 your-public-key"
+admin_cidr          = "203.0.113.42/32"
+inventory_path      = "../../../../.local/oci-inventory.json"

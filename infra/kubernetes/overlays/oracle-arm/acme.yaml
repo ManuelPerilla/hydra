@@ -1,0 +1,98 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hydra-acme
+  labels: {pod-security.kubernetes.io/enforce: restricted}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata: {name: hydra-acme-webroot}
+spec:
+  capacity: {storage: 64Mi}
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  claimRef: {namespace: hydra-acme, name: hydra-acme-webroot}
+  hostPath: {path: /srv/hydra/acme, type: Directory}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - {key: hydra.io/storage, operator: In, values: [oracle-data]}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: hydra-acme-webroot, namespace: hydra-acme}
+spec:
+  volumeName: hydra-acme-webroot
+  storageClassName: ""
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 64Mi}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: acme-nginx, namespace: hydra-acme}
+data:
+  default.conf: |
+    server {
+      listen 8080;
+      location /.well-known/acme-challenge/ { root /var/www/acme; }
+      location / { return 308 https://$host$request_uri; }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: acme, namespace: hydra-acme}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: hydra-acme}}
+  template:
+    metadata: {labels: {app: hydra-acme}}
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector: {hydra.io/storage: oracle-data}
+      securityContext: {runAsNonRoot: true, runAsUser: 101, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: nginx
+          image: nginxinc/nginx-unprivileged:stable-alpine
+          ports: [{name: http, containerPort: 8080}]
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: challenge, mountPath: /var/www/acme, readOnly: true}
+            - {name: config, mountPath: /etc/nginx/conf.d, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: challenge
+          persistentVolumeClaim: {claimName: hydra-acme-webroot, readOnly: true}
+        - name: config
+          configMap: {name: acme-nginx}
+        - name: tmp
+          emptyDir: {sizeLimit: 16Mi}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: acme, namespace: hydra-acme}
+spec:
+  selector: {app: hydra-acme}
+  ports: [{name: http, port: 8080, targetPort: http}]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hydra-acme
+  namespace: hydra-acme
+  annotations: {traefik.ingress.kubernetes.io/router.entrypoints: web}
+spec:
+  ingressClassName: traefik
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: {service: {name: acme, port: {number: 8080}}}

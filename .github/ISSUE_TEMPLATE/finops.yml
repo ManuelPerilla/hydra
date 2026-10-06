@@ -1,0 +1,12 @@
+name: Costo o cuota
+description: Reporta cambios en elegibilidad o consumo con una fuente verificable.
+title: '[FinOps] '
+body:
+  - type: input
+    id: provider
+    attributes: {label: Proveedor y fecha}
+    validations: {required: true}
+  - type: textarea
+    id: finding
+    attributes: {label: Cambio y fuente oficial, description: 'Describe la cuota o cargo observado sin incluir datos de facturación sensibles.'}
+    validations: {required: true}

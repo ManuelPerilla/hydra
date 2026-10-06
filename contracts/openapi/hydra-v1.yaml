@@ -1,0 +1,312 @@
+openapi: 3.1.0
+info:
+  title: Hydra API
+  version: 0.1.0
+  description: |
+    Same-origin API. GitHub authenticates users; numeric GitHub IDs in an explicit
+    allowlist authorize operators. Local mode requires Development plus an explicit
+    opt-in and is prohibited in production. SignalR /hubs/telemetry is WebSocket-only;
+    its Event method sends the durable event envelope described below.
+    A PostgreSQL commit precedes every destructive authorization. The agent API is
+    private and never routed through the public ingress.
+servers:
+  - url: /
+security:
+  - session: []
+paths:
+  /api/session:
+    get:
+      security: []
+      summary: Read identity and issue a CSRF token and HttpOnly CSRF cookie
+      responses:
+        '200':
+          description: Session; user is null when anonymous
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [authenticated, operator, user, csrfToken, mode]
+                properties:
+                  authenticated: { type: boolean }
+                  operator: { type: boolean }
+                  user: { type: [string, 'null'] }
+                  csrfToken: { type: string }
+                  mode: { type: string, enum: [local, github] }
+  /auth/github:
+    get:
+      security: []
+      summary: Begin GitHub OAuth with state and PKCE
+      responses:
+        '302': { description: Redirect to GitHub }
+        '400': { description: GitHub mode is disabled }
+  /auth/github/callback:
+    get:
+      security: []
+      summary: OAuth callback managed by ASP.NET Core
+      responses:
+        '302': { description: Protected session issued; redirect to / }
+        '401': { description: Invalid OAuth response }
+  /auth/logout:
+    post:
+      summary: End the cookie session
+      parameters:
+        - $ref: '#/components/parameters/Csrf'
+      responses:
+        '204': { description: Session ended }
+        '400': { description: CSRF validation failed }
+  /api/targets:
+    get:
+      summary: Read the latest bounded laboratory snapshot
+      responses:
+        '200':
+          description: A timestamp is null before the first agent heartbeat
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TargetSnapshot' }
+        '401': { description: Login required }
+  /api/experiments:
+    get:
+      summary: Read at most 100 recent experiments
+      responses:
+        '200':
+          description: Experiments in descending creation order
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    maxItems: 100
+                    items: { $ref: '#/components/schemas/Experiment' }
+    post:
+      summary: Durably authorize one fixed-UID experiment
+      description: |
+        Requires operator permission, CSRF, an idempotency key and a fully Ready
+        snapshot no older than 30 seconds with at least two laboratory pods.
+        Repeating the same key and body returns the original experiment. Reusing
+        the key for a different body is a conflict. At most one destructive slot
+        can exist, including work with an expired lease or unresolved failure.
+        The per-operator limit is eight attempts per minute.
+      parameters:
+        - $ref: '#/components/parameters/Csrf'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 128, pattern: '^[A-Za-z0-9_-]+$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [namespace, podName, podUid, dryRun]
+              properties:
+                namespace: { type: string, const: chaos-demo }
+                podName: { type: string, minLength: 1, maxLength: 253 }
+                podUid: { type: string, format: uuid }
+                dryRun: { type: boolean }
+      responses:
+        '202':
+          description: Accepted or idempotently replayed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Experiment' }
+        '400': { description: Invalid input or CSRF }
+        '401': { description: Login required }
+        '403': { description: Operator authorization required }
+        '409': { description: Target changed, unsafe snapshot, active slot or conflicting idempotency key }
+        '429': { description: Rate limit exceeded }
+        '503': { description: Durable storage unavailable or audit capacity reached }
+  /api/events:
+    get:
+      summary: Replay at most 200 committed events after a cursor
+      description: |
+        lastSequence is the final delivered sequence, or the supplied cursor for an
+        empty page. It never advances beyond an undisplayed page. If the cursor is
+        expired or ahead of the database, resetRequired is true, items is empty and
+        lastSequence is the current committed watermark. Refresh targets and
+        experiments, display the missing interval and resume from that watermark.
+      parameters:
+        - name: after
+          in: query
+          schema: { type: integer, format: int64, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: Durable replay page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, lastSequence, resetRequired]
+                properties:
+                  items:
+                    type: array
+                    maxItems: 200
+                    items: { $ref: '#/components/schemas/Event' }
+                  lastSequence: { type: integer, format: int64, minimum: 0 }
+                  resetRequired: { type: boolean }
+        '400': { description: Negative cursor }
+  /internal/agent/heartbeat:
+    post:
+      security: [{ agent: [] }]
+      summary: Save an agent-observed laboratory snapshot
+      description: Counts must agree with unique target UIDs and names. A later healthy snapshot can reconcile a failed destructive job.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [targets, ready, total]
+              properties:
+                targets:
+                  type: array
+                  maxItems: 100
+                  items: { $ref: '#/components/schemas/Target' }
+                ready: { type: integer, minimum: 0, maximum: 100 }
+                total: { type: integer, minimum: 0, maximum: 100 }
+      responses:
+        '204': { description: Snapshot persisted }
+        '400': { description: Invalid snapshot }
+        '401': { description: Invalid agent credential }
+  /internal/jobs/claim:
+    post:
+      security: [{ agent: [] }]
+      summary: Claim queued work or reclaim an expired lease with the same target UID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agentId]
+              properties:
+                agentId: { type: string, minLength: 1, maxLength: 128 }
+      responses:
+        '200':
+          description: Lease lasts 180 seconds; reporting running renews it without regressing deleted state
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, leaseToken, target, dryRun]
+                properties:
+                  id: { type: string, format: uuid }
+                  leaseToken: { type: string, minLength: 64, maxLength: 64 }
+                  target: { $ref: '#/components/schemas/TargetRef' }
+                  dryRun: { type: boolean }
+        '204': { description: No claimable work }
+        '401': { description: Invalid agent credential }
+  /internal/jobs/{id}/report:
+    post:
+      security: [{ agent: [] }]
+      summary: Update and renew work with its current lease token
+      description: |
+        Tokens are compared in constant time and stored hashed. Stale tokens cannot
+        mutate work. Repeated terminal reports are idempotent. A destructive
+        recovered report requires prior deleted confirmation plus a fresh fully
+        Ready snapshot without the original UID. A failed report holds the slot
+        until a subsequent healthy heartbeat reconciles the laboratory.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [leaseToken, status]
+              properties:
+                leaseToken: { type: string, maxLength: 128 }
+                status: { type: string, enum: [running, deleted, recovered, failed] }
+                message: { type: [string, 'null'], maxLength: 1024 }
+                recoveryMs: { type: [integer, 'null'], minimum: 0, maximum: 86400000 }
+                tweetDraft: { type: [string, 'null'], maxLength: 1000 }
+      responses:
+        '200':
+          description: Updated durable experiment
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Experiment' }
+        '400': { description: Invalid report }
+        '401': { description: Invalid agent credential }
+        '404': { description: Job not found }
+        '409': { description: Lease or state transition conflict }
+  /health/live:
+    get:
+      security: []
+      summary: Process health independent of external services
+      responses:
+        '200': { description: Live }
+  /health/ready:
+    get:
+      security: []
+      summary: Durable storage readiness
+      responses:
+        '200': { description: Ready }
+        '503': { description: PostgreSQL unavailable }
+components:
+  securitySchemes:
+    session: { type: apiKey, in: cookie, name: hydra.session }
+    agent: { type: http, scheme: bearer }
+  parameters:
+    Csrf:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      schema: { type: string }
+  schemas:
+    TargetRef:
+      type: object
+      required: [namespace, name, uid]
+      properties:
+        namespace: { type: string, const: chaos-demo }
+        name: { type: string, maxLength: 253 }
+        uid: { type: string, format: uuid }
+    Target:
+      allOf:
+        - $ref: '#/components/schemas/TargetRef'
+        - type: object
+          required: [ready]
+          properties:
+            ready: { type: boolean }
+    TargetSnapshot:
+      type: object
+      required: [namespace, items, ready, total, updatedAt]
+      properties:
+        namespace: { type: string, const: chaos-demo }
+        items:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/Target' }
+        ready: { type: integer, minimum: 0, maximum: 100 }
+        total: { type: integer, minimum: 0, maximum: 100 }
+        updatedAt: { type: [string, 'null'], format: date-time }
+    Experiment:
+      type: object
+      required: [id, status, dryRun, target, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [queued, running, deleted, recovered, failed] }
+        dryRun: { type: boolean }
+        target: { $ref: '#/components/schemas/TargetRef' }
+        createdAt: { type: string, format: date-time }
+        startedAt: { type: [string, 'null'], format: date-time }
+        completedAt: { type: [string, 'null'], format: date-time }
+        recoveryMs: { type: [integer, 'null'], minimum: 0 }
+        message: { type: [string, 'null'] }
+        tweetDraft: { type: [string, 'null'] }
+    Event:
+      type: object
+      required: [sequence, type, experimentId, at, data]
+      properties:
+        sequence: { type: integer, format: int64, minimum: 1 }
+        type: { type: string }
+        experimentId: { type: [string, 'null'], format: uuid }
+        at: { type: string, format: date-time }
+        data: { type: object }

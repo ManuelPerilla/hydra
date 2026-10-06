@@ -1,0 +1,48 @@
+name: Label repository metadata
+on:
+  issues:
+    types: [opened]
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+jobs:
+  labels:
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        with:
+          script: |
+            const definitions = [
+              ['area:api', '1976d2'], ['area:agent', 'd66b35'], ['area:web', '18a999'],
+              ['area:infra', '6f42c1'], ['finops', '2e8540'], ['documentation', '0075ca'],
+              ['good first issue', '7057ff'], ['help wanted', '008672'], ['bug', 'd73a4a']
+            ];
+            for (const [name, color] of definitions) {
+              try { await github.rest.issues.createLabel({ ...context.repo, name, color }); }
+              catch (e) { if (e.status !== 422) throw e; }
+            }
+            if (context.eventName === 'issues') {
+              const body = context.payload.issue.body || '';
+              const labels = [];
+              for (const [needle, label] of [['API', 'area:api'], ['Agente Rust', 'area:agent'], ['Frontend', 'area:web'], ['Infraestructura', 'area:infra']]) {
+                if (body.includes(needle)) labels.push(label);
+              }
+              if (labels.length) await github.rest.issues.addLabels({ ...context.repo, issue_number: context.payload.issue.number, labels });
+              return;
+            }
+            const prs = await github.paginate(github.rest.pulls.list, { ...context.repo, state: 'open', per_page: 100 });
+            for (const pr of prs) {
+              const files = await github.paginate(github.rest.pulls.listFiles, { ...context.repo, pull_number: pr.number, per_page: 100 });
+              const paths = files.map(file => file.filename);
+              const labels = [];
+              for (const [prefix, label] of [['apps/api/', 'area:api'], ['apps/chaos-agent/', 'area:agent'], ['apps/web/', 'area:web'], ['infra/', 'area:infra'], ['docs/', 'documentation']]) {
+                if (paths.some(path => path.startsWith(prefix))) labels.push(label);
+              }
+              if (labels.length) await github.rest.issues.addLabels({ ...context.repo, issue_number: pr.number, labels });
+            }

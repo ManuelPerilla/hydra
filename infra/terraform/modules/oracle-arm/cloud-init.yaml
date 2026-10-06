@@ -1,0 +1,88 @@
+#cloud-config
+package_update: true
+packages: [curl, ca-certificates, python3-venv, e2fsprogs]
+write_files:
+  - path: /etc/rancher/k3s/config.yaml
+    permissions: '0600'
+    content: |
+      write-kubeconfig-mode: '0600'
+      secrets-encryption: true
+      data-dir: /srv/hydra/k3s
+      default-local-storage-path: /srv/hydra/storage
+      node-label:
+        - hydra.io/storage=oracle-data
+      kube-apiserver-arg:
+        - anonymous-auth=false
+  - path: /usr/local/sbin/hydra-mount-data
+    permissions: '0700'
+    content: |
+      #!/bin/sh
+      set -eu
+      device=/dev/oracleoci/oraclevdb
+      for attempt in $(seq 1 120); do
+        [ -b "$device" ] && break
+        sleep 5
+      done
+      [ -b "$device" ] || { echo 'Hydra data volume not attached'; exit 1; }
+      if ! blkid "$device" >/dev/null 2>&1; then
+        [ -z "$(wipefs --no-act --noheadings --output TYPE "$device")" ] || { echo 'Unknown data volume signature; refusing format'; exit 1; }
+        mkfs.ext4 -L hydra-data "$device"
+      fi
+      [ "$(blkid -s TYPE -o value "$device")" = ext4 ] || exit 1
+      mkdir -p /srv/hydra
+      uuid=$(blkid -s UUID -o value "$device")
+      source=$(awk '$2 == "/srv/hydra" { print $1 }' /etc/fstab)
+      if [ -n "$source" ]; then
+        [ "$source" = "UUID=$uuid" ] || { echo 'Conflicting Hydra fstab entry'; exit 1; }
+      else
+        printf 'UUID=%s /srv/hydra ext4 defaults 0 2\n' "$uuid" >> /etc/fstab
+      fi
+      mountpoint -q /srv/hydra || mount /srv/hydra
+      [ "$(findmnt --noheadings --output UUID --target /srv/hydra)" = "$uuid" ] || { echo 'Hydra mounted from unexpected storage'; exit 1; }
+      mkdir -p /srv/hydra/k3s /srv/hydra/storage /srv/hydra/acme
+      chmod 0755 /srv/hydra/acme
+  - path: /etc/systemd/system/k3s.service.d/hydra-storage.conf
+    permissions: '0644'
+    content: |
+      [Unit]
+      RequiresMountsFor=/srv/hydra
+      Requires=hydra-firewall.service
+      After=hydra-firewall.service
+      [Service]
+      ExecStartPre=/usr/bin/mountpoint -q /srv/hydra
+  - path: /usr/local/sbin/hydra-firewall
+    permissions: '0700'
+    content: |
+      #!/bin/sh
+      set -eu
+      for port in 80 443; do
+        if ! iptables -C INPUT -p tcp --dport "$port" -m comment --comment hydra-public-ingress -j ACCEPT 2>/dev/null; then
+          iptables -I INPUT -p tcp --dport "$port" -m comment --comment hydra-public-ingress -j ACCEPT
+        fi
+      done
+  - path: /etc/systemd/system/hydra-firewall.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Hydra public ingress firewall rules
+      Before=k3s.service
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/hydra-firewall
+      RemainAfterExit=yes
+      [Install]
+      WantedBy=multi-user.target
+  - path: /usr/local/sbin/hydra-bootstrap
+    permissions: '0700'
+    content: |
+      #!/bin/sh
+      set -eu
+      /usr/local/sbin/hydra-mount-data
+      mountpoint -q /srv/hydra
+      systemctl daemon-reload
+      systemctl enable --now hydra-firewall.service
+      curl --fail --silent --show-error --location https://get.k3s.io -o /root/install-k3s.sh
+      INSTALL_K3S_VERSION=v1.35.5+k3s1 sh /root/install-k3s.sh
+      systemctl is-active --quiet k3s.service
+runcmd:
+  - [/usr/local/sbin/hydra-bootstrap]

@@ -1,0 +1,22 @@
+name: Welcome contributors
+on:
+  issues:
+    types: [opened]
+permissions:
+  contents: read
+  issues: write
+jobs:
+  welcome:
+    if: github.event.repository.private == false && github.event.issue.user.type != 'Bot'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const { data: prior } = await github.rest.search.issuesAndPullRequests({
+              q: `repo:${context.repo.owner}/${context.repo.repo} is:issue author:${issue.user.login}`
+            });
+            if (prior.total_count > 1) return;
+            await github.rest.issues.createComment({ ...context.repo, issue_number: issue.number,
+              body: 'Gracias por contribuir a Hydra. Revisa CONTRIBUTING.md y el Código de Conducta. Para problemas de seguridad utiliza el reporte privado; comparte únicamente datos del laboratorio.' });

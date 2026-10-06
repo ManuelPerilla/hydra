@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hydra.local/contracts/chaos-event.schema.json",
+  "title": "Hydra durable telemetry event v1",
+  "type": "object",
+  "required": ["sequence", "type", "experimentId", "at", "data"],
+  "additionalProperties": false,
+  "properties": {
+    "sequence": { "type": "integer", "minimum": 1 },
+    "type": { "type": "string", "enum": ["targets.updated", "experiment.queued", "experiment.claimed", "experiment.running", "experiment.deleted", "experiment.recovered", "experiment.failed", "experiment.reconciled"] },
+    "experimentId": { "type": ["string", "null"], "format": "uuid" },
+    "at": { "type": "string", "format": "date-time" },
+    "data": { "type": "object" }
+  },
+  "$comment": "SignalR method Event sends this exact envelope. Events are ordered by committed sequence. REST replay advances a client cursor only through the last delivered item. A reset requires a fresh targets/experiments snapshot and explicit notification of the unavailable interval. Delivery is at least once; deduplicate by sequence. Data is a TargetSnapshot, Experiment or reconciliation message according to type."
+}

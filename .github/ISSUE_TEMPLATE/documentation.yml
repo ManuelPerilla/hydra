@@ -1,0 +1,12 @@
+name: Documentación o traducción
+description: Mejora un paso, explicación o idioma.
+title: '[Docs] '
+body:
+  - type: input
+    id: location
+    attributes: {label: Archivo o pantalla}
+    validations: {required: true}
+  - type: textarea
+    id: correction
+    attributes: {label: Texto actual y propuesta}
+    validations: {required: true}

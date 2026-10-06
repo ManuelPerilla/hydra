@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: hydra-demo, namespace: chaos-demo}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: hydra-demo}}
+  template:
+    metadata:
+      labels: {app: hydra-demo, hydra.io/chaos: enabled}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 1000, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: demo
+          image: traefik/whoami:v1.11.0
+          args: ["--port=8080"]
+          ports: [{name: http, containerPort: 8080}]
+          resources:
+            requests: {cpu: 50m, memory: 32Mi}
+            limits: {cpu: 200m, memory: 64Mi}
+          readinessProbe: {httpGet: {path: /, port: http}, periodSeconds: 2}
+          livenessProbe: {httpGet: {path: /, port: http}, periodSeconds: 10}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: {name: hydra-demo, namespace: chaos-demo}
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: hydra-demo}
+  minReplicas: 2
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: {type: Utilization, averageUtilization: 80}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: hydra-demo, namespace: chaos-demo}
+spec:
+  minAvailable: 1
+  selector: {matchLabels: {app: hydra-demo}}
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata: {name: hydra-demo-budget, namespace: chaos-demo}
+spec:
+  hard:
+    pods: "4"
+    requests.cpu: 250m
+    requests.memory: 128Mi
+    limits.cpu: "1"
+    limits.memory: 256Mi
+---
+apiVersion: v1
+kind: LimitRange
+metadata: {name: hydra-demo-limits, namespace: chaos-demo}
+spec:
+  limits:
+    - type: Container
+      default: {cpu: 200m, memory: 64Mi}
+      defaultRequest: {cpu: 50m, memory: 32Mi}

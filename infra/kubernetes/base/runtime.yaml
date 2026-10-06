@@ -1,0 +1,279 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hydra-api
+  namespace: hydra-system
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hydra-agent
+  namespace: hydra-system
+automountServiceAccountToken: true
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hydra-web
+  namespace: hydra-system
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hydra-api
+  namespace: hydra-system
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: hydra-api}
+  template:
+    metadata:
+      labels: {app: hydra-api, app.kubernetes.io/part-of: hydra}
+    spec:
+      serviceAccountName: hydra-api
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: api
+          image: hydra-api:dev
+          imagePullPolicy: IfNotPresent
+          ports: [{name: http, containerPort: 8080}]
+          env:
+            - {name: ASPNETCORE_URLS, value: "http://+:8080"}
+            - {name: ASPNETCORE_ENVIRONMENT, value: Production}
+            - {name: Hydra__AuthMode, value: github}
+            - {name: Hydra__AllowLocalAuth, value: "false"}
+            - name: Hydra__AgentToken
+              valueFrom: {secretKeyRef: {name: hydra-runtime, key: AGENT_TOKEN}}
+            - name: Hydra__DataProtectionKey
+              valueFrom: {secretKeyRef: {name: hydra-runtime, key: DATA_PROTECTION_KEY}}
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: hydra-runtime, key: POSTGRES_PASSWORD}}
+            - name: ConnectionStrings__Hydra
+              value: "Host=postgres;Database=hydra;Username=hydra;Password=$(POSTGRES_PASSWORD)"
+            - name: Hydra__GitHubClientId
+              valueFrom: {secretKeyRef: {name: hydra-runtime, key: GITHUB_CLIENT_ID}}
+            - name: Hydra__GitHubClientSecret
+              valueFrom: {secretKeyRef: {name: hydra-runtime, key: GITHUB_CLIENT_SECRET}}
+            - name: Hydra__AllowedGitHubIds
+              valueFrom: {secretKeyRef: {name: hydra-runtime, key: ALLOWED_GITHUB_IDS}}
+            - {name: Hydra__TrustedProxyNetworks, value: "10.42.0.0/16"}
+            - name: Hydra__PublicOrigin
+              valueFrom: {secretKeyRef: {name: hydra-runtime, key: PUBLIC_URL}}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 384Mi}
+          startupProbe:
+            httpGet: {path: /health/live, port: http}
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: {path: /health/ready, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /health/live, port: http}
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes: [{name: tmp, emptyDir: {sizeLimit: 32Mi}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: hydra-api, namespace: hydra-system}
+spec:
+  selector: {app: hydra-api}
+  ports: [{name: http, port: 8080, targetPort: http}]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: {name: hydra-api, namespace: hydra-system}
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: hydra-api}
+  minReplicas: 2
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: {type: Utilization, averageUtilization: 75}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: hydra-web, namespace: hydra-system}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: hydra-web}}
+  template:
+    metadata: {labels: {app: hydra-web, app.kubernetes.io/part-of: hydra}}
+    spec:
+      serviceAccountName: hydra-web
+      securityContext: {runAsNonRoot: true, runAsUser: 1001, runAsGroup: 1001, fsGroup: 1001, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: web
+          image: hydra-web:dev
+          imagePullPolicy: IfNotPresent
+          ports: [{name: http, containerPort: 3000}]
+          env:
+            - {name: HOSTNAME, value: "0.0.0.0"}
+            - {name: PORT, value: "3000"}
+            - {name: HYDRA_API_URL, value: "http://hydra-api:8080"}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 300m, memory: 256Mi}
+          startupProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe: {httpGet: {path: /healthz, port: http}}
+          livenessProbe: {httpGet: {path: /healthz, port: http}, periodSeconds: 15}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts: [{name: cache, mountPath: /app/.next/cache}, {name: tmp, mountPath: /tmp}]
+      volumes:
+        - {name: cache, emptyDir: {sizeLimit: 32Mi}}
+        - {name: tmp, emptyDir: {sizeLimit: 16Mi}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: hydra-web, namespace: hydra-system}
+spec:
+  selector: {app: hydra-web}
+  ports: [{name: http, port: 3000, targetPort: http}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: hydra-agent, namespace: hydra-system}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: hydra-agent}}
+  template:
+    metadata: {labels: {app: hydra-agent, app.kubernetes.io/part-of: hydra}}
+    spec:
+      serviceAccountName: hydra-agent
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: agent
+          image: hydra-agent:dev
+          imagePullPolicy: IfNotPresent
+          ports: [{name: http, containerPort: 8081}]
+          env:
+            - {name: HYDRA_API_URL, value: "http://hydra-api:8080"}
+            - {name: HYDRA_NAMESPACE, value: chaos-demo}
+            - {name: HYDRA_X_ENABLED, value: "false"}
+            - name: HYDRA_AGENT_TOKEN
+              valueFrom: {secretKeyRef: {name: hydra-runtime, key: AGENT_TOKEN}}
+          resources:
+            requests: {cpu: 25m, memory: 32Mi}
+            limits: {cpu: 250m, memory: 96Mi}
+          startupProbe:
+            httpGet: {path: /health/live, port: http}
+            failureThreshold: 60
+            periodSeconds: 2
+          readinessProbe: {httpGet: {path: /health/ready, port: http}, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /health/live, port: http}, periodSeconds: 15}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: hydra-agent, namespace: hydra-system}
+spec:
+  selector: {app: hydra-agent}
+  ports: [{name: http, port: 8081, targetPort: http}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: postgres, namespace: hydra-system}
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector: {matchLabels: {app: postgres}}
+  template:
+    metadata: {labels: {app: postgres, app.kubernetes.io/part-of: hydra}}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: postgres
+          image: postgres:17-bookworm
+          args: ["-c", "shared_buffers=64MB", "-c", "max_connections=40", "-c", "work_mem=2MB"]
+          ports: [{name: postgres, containerPort: 5432}]
+          env:
+            - {name: POSTGRES_USER, value: hydra}
+            - {name: POSTGRES_DB, value: hydra}
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: hydra-runtime, key: POSTGRES_PASSWORD}}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+          readinessProbe:
+            exec: {command: [pg_isready, -U, hydra, -d, hydra]}
+            periodSeconds: 5
+          livenessProbe:
+            exec: {command: [pg_isready, -U, hydra, -d, hydra]}
+            periodSeconds: 15
+            initialDelaySeconds: 30
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+            - {name: socket, mountPath: /var/run/postgresql}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: socket, emptyDir: {sizeLimit: 16Mi}}
+        - {name: tmp, emptyDir: {sizeLimit: 16Mi}}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: {requests: {storage: 2Gi}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: postgres, namespace: hydra-system}
+spec:
+  selector: {app: postgres}
+  ports: [{name: postgres, port: 5432, targetPort: postgres}]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata: {name: hydra, namespace: hydra-system}
+spec:
+  ingressClassName: traefik
+  rules:
+    - http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend: {service: {name: hydra-api, port: {number: 8080}}}
+          - path: /auth
+            pathType: Prefix
+            backend: {service: {name: hydra-api, port: {number: 8080}}}
+          - path: /hubs
+            pathType: Prefix
+            backend: {service: {name: hydra-api, port: {number: 8080}}}
+          - path: /health
+            pathType: Prefix
+            backend: {service: {name: hydra-api, port: {number: 8080}}}
+          - path: /
+            pathType: Prefix
+            backend: {service: {name: hydra-web, port: {number: 3000}}}

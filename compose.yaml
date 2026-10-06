@@ -1,0 +1,70 @@
+name: hydra
+services:
+  postgres:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_DB: hydra
+      POSTGRES_USER: hydra
+      POSTGRES_PASSWORD: ${HYDRA_POSTGRES_PASSWORD:?Generate .env with bootstrap first}
+    volumes:
+      - hydra-db:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U hydra -d hydra"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    mem_limit: 512m
+    networks: [private]
+  api:
+    image: hydra-api:dev
+    build:
+      context: apps/api
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ASPNETCORE_ENVIRONMENT: Development
+      Hydra__AuthMode: ${HYDRA_AUTH_MODE:-local}
+      Hydra__AllowLocalAuth: "true"
+      Hydra__AgentToken: ${HYDRA_AGENT_TOKEN:?Generate .env first}
+      Hydra__DataProtectionKey: ${HYDRA_DATA_PROTECTION_KEY:?Generate .env first}
+      Hydra__GitHubClientId: ${HYDRA_GITHUB_CLIENT_ID:-}
+      Hydra__GitHubClientSecret: ${HYDRA_GITHUB_CLIENT_SECRET:-}
+      Hydra__AllowedGitHubIds: ${HYDRA_ALLOWED_GITHUB_IDS:-}
+      Hydra__PublicOrigin: ${HYDRA_PUBLIC_URL:-http://localhost:8080}
+      Hydra__TrustedProxyNetworks: "172.30.88.0/24"
+      ConnectionStrings__Hydra: Host=postgres;Database=hydra;Username=hydra;Password=${HYDRA_POSTGRES_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    mem_limit: 384m
+    networks: [private]
+  web:
+    image: hydra-web:dev
+    build:
+      context: apps/web
+    environment:
+      HYDRA_API_URL: http://api:8080
+      HOSTNAME: 0.0.0.0
+      PORT: "3000"
+    depends_on: [api]
+    restart: unless-stopped
+    mem_limit: 256m
+    networks: [private]
+  gateway:
+    image: nginx:stable-alpine
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./infra/gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on: [api, web]
+    restart: unless-stopped
+    mem_limit: 64m
+    networks: [private]
+volumes:
+  hydra-db:
+networks:
+  private:
+    ipam:
+      config:
+        - subnet: 172.30.88.0/24

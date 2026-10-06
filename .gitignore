@@ -1,0 +1,30 @@
+# Credentials and local tools
+.env
+.env.*
+!.env.example
+**/.tools/
+.tools/
+*.tfstate*
+*.tfvars
+!*.tfvars.example
+**/.terraform/
+*.pem
+*.key
+.secrets/
+.local/
+# Builds
+**/bin/
+**/obj/
+**/target/
+**/node_modules/
+**/.next/
+**/coverage/
+**/TestResults/
+**/playwright-report/
+**/test-results/
+*.log
+**/__pycache__/
+*.py[cod]
+*.tsbuildinfo
+.DS_Store
+Thumbs.db

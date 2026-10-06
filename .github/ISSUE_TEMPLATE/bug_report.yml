@@ -1,0 +1,21 @@
+name: Error reproducible
+description: Ayuda a reproducir un problema con datos del laboratorio.
+title: '[Bug] '
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Componente
+      options: [API, Agente Rust, Frontend, Infraestructura]
+    validations: {required: true}
+  - type: input
+    id: version
+    attributes: {label: Versión y arquitectura, placeholder: 'commit/version; amd64 o arm64'}
+    validations: {required: true}
+  - type: textarea
+    id: reproduction
+    attributes: {label: Pasos y resultado esperado/observado, description: 'No incluyas secretos, IP privadas ni datos de usuarios.'}
+    validations: {required: true}
+  - type: textarea
+    id: evidence
+    attributes: {label: Evidencia del laboratorio, description: 'Logs redactados, estados y mediciones disponibles.'}

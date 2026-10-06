@@ -1,0 +1,7 @@
+# IP literal clients omit SNI. Use the issued IP certificate as Traefik's default.
+apiVersion: traefik.io/v1alpha1
+kind: TLSStore
+metadata: {name: default, namespace: hydra-system}
+spec:
+  defaultCertificate:
+    secretName: hydra-tls

@@ -1,0 +1,8 @@
+[Unit]
+Description=Renew Hydra short-lived IP certificate
+After=network-online.target k3s.service
+Wants=network-online.target
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/hydra/certificate.env
+ExecStart=/usr/local/sbin/hydra-renew-ip ${HYDRA_PUBLIC_IP} ${HYDRA_ACME_EMAIL}

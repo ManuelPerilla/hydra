@@ -1,0 +1,22 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: hydra-chaos, namespace: chaos-demo}
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch, delete]
+  - apiGroups: [apps]
+    resources: [replicasets]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: hydra-chaos, namespace: chaos-demo}
+subjects:
+  - kind: ServiceAccount
+    name: hydra-agent
+    namespace: hydra-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: hydra-chaos

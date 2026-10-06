@@ -1,0 +1,12 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: hydra-api, namespace: hydra-system}
+spec:
+  template:
+    spec:
+      containers:
+        - name: api
+          env:
+            - {name: ASPNETCORE_ENVIRONMENT, value: Development}
+            - {name: Hydra__AuthMode, value: local}
+            - {name: Hydra__AllowLocalAuth, value: "true"}
